@@ -3,6 +3,8 @@ import { redirect } from 'next/navigation'
 import Link from 'next/link'
 import { RagBadge } from '@/components/ui/RagBadge'
 import { StatusBadge } from '@/components/ui/StatusBadge'
+import { HealthScorePill } from '@/components/ui/HealthScore'
+import { calculateHealth, calculatePortfolioHealth } from '@/lib/health/calculateHealth'
 
 export default async function DashboardPage() {
   const supabase = await createClient()
@@ -17,24 +19,43 @@ export default async function DashboardPage() {
 
   if (!profile?.org_id) redirect('/org-setup')
 
+  // Full project data needed for health calculation
   const { data: projects } = await supabase
     .from('projects')
-    .select(`*, checkins(overall_status, date, period_label, notes)`)
+    .select(`
+      *,
+      outcomes(*, indicators(*)),
+      assumptions(*),
+      checkins(
+        *,
+        kpi_updates(*, indicators(*))
+      )
+    `)
     .eq('org_id', profile.org_id)
     .order('created_at', { ascending: false })
 
-  const total     = projects?.length || 0
-  const active    = projects?.filter(p => p.status === 'ACTIVE').length || 0
-  const completed = projects?.filter(p => p.status === 'COMPLETED').length || 0
-  const draft     = projects?.filter(p => p.status === 'DRAFT').length || 0
+  const allProjects = projects || []
 
-  // Get latest checkin status per project
-  const projectsWithStatus = projects?.map(p => {
-    const latest = p.checkins?.sort((a: any, b: any) =>
+  // ── Basic stats ──
+  const total     = allProjects.length
+  const active    = allProjects.filter(p => p.status === 'ACTIVE').length
+  const completed = allProjects.filter(p => p.status === 'COMPLETED').length
+  const draft     = allProjects.filter(p => p.status === 'DRAFT').length
+
+  // ── Health scores ──
+  const healthMap = new Map(
+    allProjects.map(p => [p.id, calculateHealth(p)])
+  )
+  const portfolio = calculatePortfolioHealth(allProjects)
+
+  // ── Latest checkin per project ──
+  const projectsWithStatus = allProjects.map(p => {
+    const sorted = p.checkins?.sort((a: any, b: any) =>
       new Date(b.date).getTime() - new Date(a.date).getTime()
-    )[0]
+    )
+    const latest = sorted?.[0]
     return { ...p, latestStatus: latest?.overall_status, latestCheckin: latest }
-  }) || []
+  })
 
   const onTrack  = projectsWithStatus.filter(p => p.latestStatus === 'GREEN').length
   const atRisk   = projectsWithStatus.filter(p => p.latestStatus === 'AMBER').length
@@ -44,6 +65,12 @@ export default async function DashboardPage() {
     .filter(p => p.latestCheckin)
     .sort((a, b) => new Date(b.latestCheckin.date).getTime() - new Date(a.latestCheckin.date).getTime())
     .slice(0, 5)
+
+  const driftingProjects = projectsWithStatus.filter(p => healthMap.get(p.id)?.isDrifting)
+
+  const portfolioRagColor: Record<string, string> = {
+    GREEN: 'var(--accent)', AMBER: 'var(--amber)', RED: 'var(--red)', NONE: 'var(--text3)',
+  }
 
   return (
     <div>
@@ -69,13 +96,112 @@ export default async function DashboardPage() {
       </header>
 
       <div style={{ padding: '28px' }}>
-        {/* Stats */}
+
+        {/* ── Portfolio Health Banner ── */}
+        {total > 0 && (
+          <div style={{
+            background: 'var(--surface)', border: `1px solid ${portfolioRagColor[portfolio.rag]}44`,
+            borderRadius: '10px', padding: '20px 24px', marginBottom: '20px',
+            display: 'flex', alignItems: 'center', gap: '24px',
+          }}>
+            {/* Big score */}
+            <div style={{ textAlign: 'center', flexShrink: 0 }}>
+              <div style={{
+                fontFamily: 'DM Serif Display, serif', fontSize: '48px', lineHeight: 1,
+                color: portfolioRagColor[portfolio.rag],
+              }}>
+                {portfolio.avgScore}
+              </div>
+              <div style={{ fontFamily: 'DM Mono, monospace', fontSize: '9px', color: 'var(--text3)', textTransform: 'uppercase', letterSpacing: '1px' }}>
+                Portfolio Health
+              </div>
+            </div>
+
+            <div style={{ width: '1px', height: '48px', background: 'var(--border)', flexShrink: 0 }} />
+
+            {/* Breakdown */}
+            <div style={{ flex: 1, display: 'flex', gap: '32px', flexWrap: 'wrap' }}>
+              <div>
+                <div style={{ fontFamily: 'DM Serif Display, serif', fontSize: '24px', color: 'var(--accent)' }}>{onTrack}</div>
+                <div style={{ fontFamily: 'DM Mono, monospace', fontSize: '9px', color: 'var(--text3)', textTransform: 'uppercase' }}>On Track</div>
+              </div>
+              <div>
+                <div style={{ fontFamily: 'DM Serif Display, serif', fontSize: '24px', color: 'var(--amber)' }}>{atRisk}</div>
+                <div style={{ fontFamily: 'DM Mono, monospace', fontSize: '9px', color: 'var(--text3)', textTransform: 'uppercase' }}>At Risk</div>
+              </div>
+              <div>
+                <div style={{ fontFamily: 'DM Serif Display, serif', fontSize: '24px', color: 'var(--red)' }}>{offTrack}</div>
+                <div style={{ fontFamily: 'DM Mono, monospace', fontSize: '9px', color: 'var(--text3)', textTransform: 'uppercase' }}>Off Track</div>
+              </div>
+              {portfolio.driftingCount > 0 && (
+                <div>
+                  <div style={{ fontFamily: 'DM Serif Display, serif', fontSize: '24px', color: 'var(--red)' }}>
+                    {portfolio.driftingCount}
+                  </div>
+                  <div style={{ fontFamily: 'DM Mono, monospace', fontSize: '9px', color: 'var(--red)', textTransform: 'uppercase' }}>
+                    Drifting ⚠
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* RAG pill */}
+            <div style={{
+              padding: '6px 14px', borderRadius: '20px', flexShrink: 0,
+              background: `${portfolioRagColor[portfolio.rag]}22`,
+              border: `1px solid ${portfolioRagColor[portfolio.rag]}44`,
+              fontFamily: 'DM Mono, monospace', fontSize: '10px', fontWeight: 700,
+              color: portfolioRagColor[portfolio.rag], textTransform: 'uppercase',
+            }}>
+              ● {portfolio.rag}
+            </div>
+          </div>
+        )}
+
+        {/* ── Drift Alert Panel ── */}
+        {driftingProjects.length > 0 && (
+          <div style={{
+            background: '#ef444411', border: '1px solid #ef444433',
+            borderRadius: '10px', padding: '16px 20px', marginBottom: '20px',
+          }}>
+            <div style={{ fontFamily: 'DM Mono, monospace', fontSize: '10px', textTransform: 'uppercase', letterSpacing: '1px', color: 'var(--red)', marginBottom: '10px' }}>
+              ⚠ {driftingProjects.length} Project{driftingProjects.length > 1 ? 's' : ''} Off Route
+            </div>
+            <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+              {driftingProjects.map((p: any) => {
+                const h = healthMap.get(p.id)!
+                return (
+                  <Link key={p.id} href={`/projects/${p.id}`} style={{ textDecoration: 'none' }}>
+                    <div style={{
+                      background: 'var(--surface)', border: '1px solid #ef444433',
+                      borderRadius: '8px', padding: '8px 14px',
+                      display: 'flex', alignItems: 'center', gap: '10px',
+                      cursor: 'pointer', transition: 'border-color 0.15s',
+                    }}>
+                      <div style={{ fontFamily: 'DM Serif Display, serif', fontSize: '20px', color: 'var(--red)', lineHeight: 1 }}>
+                        {h.score}
+                      </div>
+                      <div>
+                        <div style={{ fontSize: '12px', fontWeight: 700, color: 'var(--text)' }}>{p.title}</div>
+                        <div style={{ fontFamily: 'DM Mono, monospace', fontSize: '9px', color: 'var(--red)' }}>
+                          {h.driftReasons[0]}
+                        </div>
+                      </div>
+                    </div>
+                  </Link>
+                )
+              })}
+            </div>
+          </div>
+        )}
+
+        {/* ── Stats Row ── */}
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '12px', marginBottom: '28px' }}>
           {[
             { label: 'Total Projects', value: total, sub: `${active} active · ${completed} completed · ${draft} draft`, color: 'var(--blue)' },
             { label: 'On Track',  value: onTrack,  sub: 'GREEN status', color: 'var(--accent2)' },
-            { label: 'At Risk',   value: atRisk,   sub: 'AMBER status', color: 'var(--amber)' },
-            { label: 'Off Track', value: offTrack, sub: 'RED status',   color: 'var(--red)' },
+            { label: 'At Risk',   value: atRisk,   sub: 'AMBER status', color: 'var(--amber)'   },
+            { label: 'Off Track', value: offTrack, sub: 'RED status',   color: 'var(--red)'     },
           ].map(stat => (
             <div key={stat.label} style={{
               background: 'var(--surface)', border: '1px solid var(--border)',
@@ -96,7 +222,7 @@ export default async function DashboardPage() {
         </div>
 
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 320px', gap: '20px' }}>
-          {/* Projects */}
+          {/* Projects grid */}
           <div>
             <div style={{ display: 'flex', alignItems: 'baseline', gap: '12px', marginBottom: '16px' }}>
               <div style={{ fontFamily: 'DM Serif Display, serif', fontSize: '20px' }}>Projects</div>
@@ -106,7 +232,7 @@ export default async function DashboardPage() {
               </Link>
             </div>
 
-            {projects?.length === 0 ? (
+            {total === 0 ? (
               <div style={{
                 background: 'var(--surface)', border: '1px solid var(--border)',
                 borderRadius: '10px', padding: '60px', textAlign: 'center',
@@ -127,31 +253,47 @@ export default async function DashboardPage() {
               </div>
             ) : (
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
-                {projectsWithStatus.slice(0, 6).map((project: any) => (
-                  <Link key={project.id} href={`/projects/${project.id}`} style={{ textDecoration: 'none' }}>
-                    <div style={{
-                      background: 'var(--surface)', border: '1px solid var(--border)',
-                      borderRadius: '10px', padding: '18px', cursor: 'pointer',
-                      transition: 'all 0.2s',
-                    }}>
-                      <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '10px' }}>
-                        <div style={{ fontFamily: 'DM Mono, monospace', fontSize: '9px', textTransform: 'uppercase', color: 'var(--text3)' }}>
-                          {project.category || 'Project'}
+                {projectsWithStatus.slice(0, 6).map((project: any) => {
+                  const health = healthMap.get(project.id)!
+                  return (
+                    <Link key={project.id} href={`/projects/${project.id}`} style={{ textDecoration: 'none' }}>
+                      <div style={{
+                        background: 'var(--surface)',
+                        border: `1px solid ${health.isDrifting ? '#ef444433' : 'var(--border)'}`,
+                        borderRadius: '10px', padding: '18px', cursor: 'pointer',
+                        transition: 'all 0.2s',
+                      }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '10px' }}>
+                          <div style={{ fontFamily: 'DM Mono, monospace', fontSize: '9px', textTransform: 'uppercase', color: 'var(--text3)' }}>
+                            {project.category || 'Project'}
+                          </div>
+                          <StatusBadge status={project.status} />
                         </div>
-                        <StatusBadge status={project.status} />
+                        <div style={{ fontFamily: 'DM Serif Display, serif', fontSize: '15px', color: 'var(--text)', marginBottom: '6px', lineHeight: 1.3 }}>
+                          {project.title}
+                        </div>
+                        <div style={{ fontSize: '12px', color: 'var(--text2)', lineHeight: 1.5, marginBottom: '12px' }}>
+                          {project.description?.slice(0, 80)}{project.description?.length > 80 ? '…' : ''}
+                        </div>
+                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                          {project.latestStatus
+                            ? <RagBadge status={project.latestStatus} />
+                            : <span />
+                          }
+                          <HealthScorePill health={health} />
+                        </div>
+                        {health.isDrifting && (
+                          <div style={{
+                            marginTop: '8px', fontFamily: 'DM Mono, monospace', fontSize: '9px',
+                            color: 'var(--red)', textTransform: 'uppercase', letterSpacing: '0.5px',
+                          }}>
+                            ⚠ Off Route
+                          </div>
+                        )}
                       </div>
-                      <div style={{ fontFamily: 'DM Serif Display, serif', fontSize: '15px', color: 'var(--text)', marginBottom: '6px', lineHeight: 1.3 }}>
-                        {project.title}
-                      </div>
-                      <div style={{ fontSize: '12px', color: 'var(--text2)', lineHeight: 1.5, marginBottom: '12px' }}>
-                        {project.description?.slice(0, 80)}{project.description?.length > 80 ? '…' : ''}
-                      </div>
-                      {project.latestStatus && (
-                        <RagBadge status={project.latestStatus} />
-                      )}
-                    </div>
-                  </Link>
-                ))}
+                    </Link>
+                  )
+                })}
               </div>
             )}
           </div>

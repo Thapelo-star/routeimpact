@@ -4,6 +4,9 @@ import Link from 'next/link'
 import { RagBadge } from '@/components/ui/RagBadge'
 import { StatusBadge } from '@/components/ui/StatusBadge'
 import { ProjectTabs } from '@/components/project/ProjectTabs'
+import { HealthScoreCard } from '@/components/ui/HealthScore'
+import { DriftBanner } from '@/components/ui/DriftBanner'
+import { calculateHealth } from '@/lib/health/calculateHealth'
 
 export default async function ProjectPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params
@@ -37,6 +40,9 @@ export default async function ProjectPage({ params }: { params: Promise<{ id: st
   ) || []
 
   const latestCheckin = sortedCheckins[0]
+
+  // ── Health Score ──
+  const health = calculateHealth(project)
 
   return (
     <div>
@@ -73,6 +79,10 @@ export default async function ProjectPage({ params }: { params: Promise<{ id: st
       </header>
 
       <div style={{ padding: '28px' }}>
+
+        {/* Drift Banner — shows only when off route */}
+        <DriftBanner health={health} projectId={id} />
+
         {/* Project header card */}
         <div style={{
           background: 'var(--surface)', border: '1px solid var(--border)',
@@ -92,11 +102,9 @@ export default async function ProjectPage({ params }: { params: Promise<{ id: st
                 </div>
               )}
             </div>
-            {latestCheckin && (
-              <div style={{ flexShrink: 0 }}>
-                <RagBadge status={latestCheckin.overall_status} />
-              </div>
-            )}
+
+            {/* Health Score Card */}
+            <HealthScoreCard health={health} />
           </div>
 
           {/* Meta row */}
@@ -127,6 +135,12 @@ export default async function ProjectPage({ params }: { params: Promise<{ id: st
             {project.budget && (
               <div style={{ fontFamily: 'DM Mono, monospace', fontSize: '11px', color: 'var(--text3)' }}>
                 💰 R{Number(project.budget).toLocaleString()}
+              </div>
+            )}
+            {/* Trend inline */}
+            {health.trend !== 'no_data' && (
+              <div style={{ fontFamily: 'DM Mono, monospace', fontSize: '11px', color: 'var(--text3)' }}>
+                {health.trend === 'improving' ? '📈' : health.trend === 'declining' ? '📉' : '➡'} {health.trend}
               </div>
             )}
           </div>
