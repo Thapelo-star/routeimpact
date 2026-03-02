@@ -7,6 +7,7 @@ import { ProjectTabs } from '@/components/project/ProjectTabs'
 import { HealthScoreCard } from '@/components/ui/HealthScore'
 import { DriftBanner } from '@/components/ui/DriftBanner'
 import { calculateHealth } from '@/lib/health/calculateHealth'
+import { findSimilarProjects } from '@/lib/insights/similarProjects'
 
 export default async function ProjectPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params
@@ -14,26 +15,35 @@ export default async function ProjectPage({ params }: { params: Promise<{ id: st
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) redirect('/auth/login')
 
+  // ── Current project ──
   const { data: project } = await supabase
     .from('projects')
     .select(`
       *,
       profiles(full_name, email),
-      outcomes(
-        *,
-        indicators(*)
-      ),
+      outcomes(*, indicators(*)),
       assumptions(*),
-      checkins(
-        *,
-        kpi_updates(*, indicators(*))
-      ),
+      checkins(*, kpi_updates(*, indicators(*))),
       learnings(*)
     `)
     .eq('id', id)
     .single()
 
   if (!project) notFound()
+
+  // ── All org projects for similarity matching ──
+  const { data: allOrgProjects } = await supabase
+    .from('projects')
+    .select(`
+      id, title, description, theme, status,
+      outcomes(*, indicators(*)),
+      assumptions(*),
+      checkins(*, kpi_updates(*, indicators(*))),
+      learnings(*)
+    `)
+    .eq('org_id', project.org_id)
+
+  const similarProjects = findSimilarProjects(project, allOrgProjects ?? [])
 
   const sortedCheckins = project.checkins?.sort((a: any, b: any) =>
     new Date(b.date).getTime() - new Date(a.date).getTime()
@@ -137,7 +147,6 @@ export default async function ProjectPage({ params }: { params: Promise<{ id: st
                 💰 R{Number(project.budget).toLocaleString()}
               </div>
             )}
-            {/* Trend inline */}
             {health.trend !== 'no_data' && (
               <div style={{ fontFamily: 'DM Mono, monospace', fontSize: '11px', color: 'var(--text3)' }}>
                 {health.trend === 'improving' ? '📈' : health.trend === 'declining' ? '📉' : '➡'} {health.trend}
@@ -147,11 +156,13 @@ export default async function ProjectPage({ params }: { params: Promise<{ id: st
         </div>
 
         {/* Tabs */}
-        <ProjectTabs
-          project={project}
-          checkins={sortedCheckins}
-          latestCheckin={latestCheckin}
-        />
+     <ProjectTabs
+  project={project}
+  checkins={sortedCheckins}
+  latestCheckin={latestCheckin}
+  similarProjects={similarProjects}
+  allOrgProjects={allOrgProjects ?? []}   // ← add this
+/>
       </div>
     </div>
   )

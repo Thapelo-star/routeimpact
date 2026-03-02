@@ -3,6 +3,8 @@
 import { useState } from 'react'
 import Link from 'next/link'
 import { RagBadge } from '@/components/ui/RagBadge'
+import { InsightsTab } from '@/components/project/InsightsTab'
+import type { SimilarProject } from '@/lib/insights/similarProjects'
 
 const THEME_ICONS: Record<string, string> = {
   ENVIRONMENTAL: '🌿',
@@ -21,17 +23,22 @@ export function ProjectTabs({
   project,
   checkins,
   latestCheckin,
+  similarProjects,
+  allOrgProjects, // ✅ add
 }: {
   project: any
   checkins: any[]
   latestCheckin: any
+  similarProjects: SimilarProject[]
+  allOrgProjects: any[] // ✅ add
 }) {
   const [activeTab, setActiveTab] = useState('blueprint')
 
   const tabs = [
-    { id: 'blueprint', label: '◷ Blueprint',    sub: 'Before'  },
-    { id: 'tracking',  label: '◉ Progress',      sub: 'During'  },
-    { id: 'retro',     label: '◌ Retrospective', sub: 'After'   },
+    { id: 'blueprint', label: '◷ Blueprint',    sub: 'Before'   },
+    { id: 'tracking',  label: '◉ Progress',      sub: 'During'   },
+    { id: 'retro',     label: '◌ Retrospective', sub: 'After'    },
+    { id: 'insights',  label: '✦ Insights',      sub: 'Learn'    },
   ]
 
   return (
@@ -58,6 +65,15 @@ export function ProjectTabs({
             <span style={{ fontFamily: 'DM Mono, monospace', fontSize: '9px', opacity: 0.7 }}>
               {tab.sub}
             </span>
+            {tab.id === 'insights' && similarProjects.length > 0 && (
+              <span style={{
+                background: 'var(--accent2)', color: '#052e16',
+                fontSize: '9px', fontFamily: 'DM Mono, monospace',
+                borderRadius: '10px', padding: '1px 6px', fontWeight: 700,
+              }}>
+                {similarProjects.length}
+              </span>
+            )}
           </div>
         ))}
       </div>
@@ -372,6 +388,25 @@ export function ProjectTabs({
             <div>
               {project.learnings.map((l: any) => (
                 <div key={l.id}>
+                  {/* AI Summary */}
+                  {l.ai_summary && (
+                    <div style={{
+                      background: '#4ade8011', border: '1px solid #4ade8033',
+                      borderRadius: '10px', padding: '16px 20px', marginBottom: '16px',
+                    }}>
+                      <div style={{
+                        fontFamily: 'DM Mono, monospace', fontSize: '9px',
+                        textTransform: 'uppercase', letterSpacing: '1px',
+                        color: 'var(--accent)', marginBottom: '8px',
+                      }}>
+                        ✦ AI Executive Summary
+                      </div>
+                      <div style={{ fontSize: '14px', color: 'var(--text)', lineHeight: 1.7 }}>
+                        {l.ai_summary}
+                      </div>
+                    </div>
+                  )}
+
                   <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '14px', marginBottom: '14px' }}>
                     {[
                       { label: '✓ What Worked',      value: l.what_worked,     color: 'var(--accent)' },
@@ -414,6 +449,16 @@ export function ProjectTabs({
             </div>
           )}
         </div>
+      )}
+
+      {/* ══════════════════════════════════════
+          INSIGHTS TAB
+      ══════════════════════════════════════ */}
+      {activeTab === 'insights' && (
+        <InsightsTab
+          similarProjects={similarProjects}
+          currentTheme={project.theme}
+        />
       )}
     </div>
   )
